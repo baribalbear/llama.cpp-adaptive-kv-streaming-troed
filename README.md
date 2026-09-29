@@ -16,6 +16,8 @@ Additions in this fork:
   drafter propose the wide round and the MTP head the narrow one, sharing one
   target pool [^1].
 
+Previous fork of Raymond's v1 + ejectable MTP/DFlash2 and ngram-* is on [this branch](https://github.com/troed/llama.cpp-adaptive-kv-streaming/tree/feature/kv-stream-phase-arena-spec)
+
 [^1]: The streamed verify width is derived from the configured speculators, one
 plus the widest draft any of them can produce, and clamped to the context and
 ubatch, so a wide ngram draft needs an ubatch at least that large (the load is
