@@ -11,6 +11,18 @@ Additions in this fork:
   [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp)
   [`6c7a87f7e`](https://github.com/ggml-org/llama.cpp/commit/6c7a87f7e5e5cd75b8a641c3471f2dee84a6ed17)
   (2026-09-28) on 2026-09-29.
+- ngram speculators can run alongside attached MTP on a streamed context:
+  `--spec-type ngram-simple,draft-mtp` (any `ngram-*` type works) lets the ngram
+  drafter propose the wide round and the MTP head the narrow one, sharing one
+  target pool [^1].
+
+[^1]: The streamed verify width is derived from the configured speculators, one
+plus the widest draft any of them can produce, and clamped to the context and
+ubatch, so a wide ngram draft needs an ubatch at least that large (the load is
+refused otherwise). A verify batch above four tokens gathers the layer's full
+K/V layout into the attention grant; on the shared-arena path that is paid by
+the phase arena rather than by extra VRAM, so the decode phase keeps a smaller
+KV pool and the arena may need raising.
 
 ---
 

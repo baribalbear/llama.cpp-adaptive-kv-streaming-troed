@@ -19,6 +19,8 @@ struct llama_kv_stream_session_config {
     llama_memory_stage_id decode_stage = 0;
     // Measured before CUDA graph capture; zero retains the direct-session query.
     size_t mma_workspace_bytes = 0;
+    // Widest admitted decode batch; the session rejects anything wider.
+    uint32_t verify_width = 1;
 };
 
 // Serial append-only device consumer. The backend outlives the session; recurrent state belongs to the text model.

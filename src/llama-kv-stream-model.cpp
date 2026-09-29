@@ -15,6 +15,9 @@ using mtp_lease_ptr = std::unique_ptr<llama_kv_stream_complete_layer_lease,
 using model_lease_ptr = std::unique_ptr<ggml_backend_memory_lease,decltype(&ggml_backend_memory_lease_free)>;
 static std::atomic<uint64_t> model_cache_id{1};
 
+// Span execution covers query widths 1-2 (vector) and 3-4 (MMA); a wider verify gathers.
+constexpr uint32_t KV_STREAM_SPAN_QUERY_WIDTH = 4;
+
 struct llama_kv_stream_model::implementation {
     llama_kv_stream_model_config config;
     std::shared_ptr<llama_kv_stream_host> host;
@@ -75,6 +78,7 @@ struct llama_kv_stream_model::implementation {
              ggml_backend_buffer_get_size(attention_buffer) == decode_bytes);
         session_config.cross_token_prefetch = config.cross_token_prefetch && config.resume_decode;
         session_config.mma_workspace_bytes = mma_bytes;
+        session_config.verify_width = config.verify_width;
         session_config.pool_resource = pool_id;
         session_config.writer_resource = writer_id;
         session_config.attention_resource = attention_id;
@@ -375,6 +379,10 @@ std::unique_ptr<llama_kv_stream_model> llama_kv_stream_model::create(const llama
                 s->decode_bytes=std::max(s->decode_bytes,mma_bytes);
             }
         }
+        // A batch above the span shapes gathers the whole layer layout into the grant.
+        if (s->config.verify_width > KV_STREAM_SPAN_QUERY_WIDTH) {
+            s->decode_bytes = std::max(s->decode_bytes, s->host->layout().bytes);
+        }
         if (!s->allocate_private()) return {};
         const ggml_backend_execution_ops ops{
             [](void * p,const ggml_tensor * t) { return (*static_cast<std::shared_ptr<implementation> *>(p))->supports(t); },
@@ -637,7 +645,7 @@ bool llama_kv_stream_model::set_ring_guard(std::shared_ptr<const llama_kv_stream
 bool llama_kv_stream_model::begin(size_t active,uint32_t queries,bool decode) {
     auto & s = *impl;
     if (!s.session || s.external_mutation || s.session->active() || s.session->failed() || !queries || queries > s.config.max_batch_rows ||
-            (decode && queries > 4) || active < s.session->tokens() || active-s.session->tokens() != queries ||
+            (decode && queries > s.config.verify_width) || active < s.session->tokens() || active-s.session->tokens() != queries ||
             active > s.host->config().context_tokens) return false;
     // A new KV page can require physical repartition; retire the MTP guard
     // before admitting that page, never after an already submitted target copy.
