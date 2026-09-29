@@ -429,6 +429,8 @@ extern "C" {
         size_t shared_device_memory_bytes;
         // Experimental: reserve one separate MTP logical host cache in the target's physical KV policy.
         uint32_t kv_stream_auxiliary_layers;
+        // Widest decode/verify batch admitted while streaming. 1 disables wide verify.
+        uint32_t kv_stream_verify_width;
     };
 
     struct llama_model_tensor_override {

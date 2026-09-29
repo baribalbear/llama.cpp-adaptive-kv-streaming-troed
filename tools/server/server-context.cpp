@@ -52,6 +52,21 @@ static common_speculative_output_limits server_output_limits(const common_params
     return result;
 }
 
+// The ngram speculators draft from token history, so they may share one target
+// with an attached MTP layer.
+static bool spec_type_is_ngram(common_speculative_type type) {
+    switch (type) {
+        case COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE:
+        case COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K:
+        case COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V:
+        case COMMON_SPECULATIVE_TYPE_NGRAM_MOD:
+        case COMMON_SPECULATIVE_TYPE_NGRAM_CACHE:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // synthetic draft verification for benchmarking - accept draft tokens at random instead of by match with the target
 // on replay the draft was already accepted before a context checkpoint restore, so repeat the same decisions
 static std::vector<llama_token> server_sample_and_accept_synth(
@@ -1041,14 +1056,26 @@ private:
             SRV_ERR("%s", "KV streaming shared memory requires text-only execution, --fit off, and explicit MTP opt-in for speculation\n");
             return false;
         }
+        const auto unsupported_type = [](auto type) {
+            return type != COMMON_SPECULATIVE_TYPE_NONE &&
+                type != COMMON_SPECULATIVE_TYPE_DRAFT_MTP && !spec_type_is_ngram(type);
+        };
         if (streamed_mtp && (!streaming || !spec_mtp || has_draft ||
                 std::any_of(params.speculative.types.begin(), params.speculative.types.end(),
-                    [](auto type) { return type != COMMON_SPECULATIVE_TYPE_NONE &&
-                        type != COMMON_SPECULATIVE_TYPE_DRAFT_MTP; }) || params.n_parallel != 1 ||
+                    unsupported_type) || params.n_parallel != 1 ||
                 params.speculative.draft.n_max < 1 || params.speculative.draft.n_max > 4 ||
                 params.cache_type_k != GGML_TYPE_Q8_0 || params.cache_type_v != GGML_TYPE_Q4_0)) {
-            SRV_ERR("%s", "adaptive MTP currently requires serial embedded Qwen MTP, 1-4 draft tokens, Q8_0 K/Q4_0 V, and an explicit KV stream pool or arena\n");
+            SRV_ERR("%s", "adaptive MTP currently requires serial embedded Qwen MTP with optional ngram self-speculation, 1-4 draft tokens, Q8_0 K/Q4_0 V, and an explicit KV stream pool or arena\n");
             return false;
+        }
+        if (streaming && !streamed_mtp) {
+            // A streamed verify batch is one ubatch; a wider draft is rejected after the load.
+            const int32_t draft_max = common_speculative_n_max(&params_base.speculative);
+            const uint32_t ubatch = params_base.n_ubatch ? params_base.n_ubatch : params_base.n_batch;
+            if (draft_max > 0 && uint32_t(draft_max) + 1 > ubatch) {
+                SRV_ERR("%s", "KV streaming cannot verify a draft wider than one ubatch; raise the ubatch size\n");
+                return false;
+            }
         }
 
         if (callback_state) {

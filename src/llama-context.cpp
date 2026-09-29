@@ -278,6 +278,16 @@ llama_context::llama_context(
     if (cparams.kv_stream_pool_bytes && cparams.shared_device_memory_bytes) {
         throw std::runtime_error("kv_stream_pool_bytes and shared_device_memory_bytes are mutually exclusive");
     }
+    cparams.kv_stream_verify_width = std::max(1u, params.kv_stream_verify_width);
+    const uint32_t verify_limit = std::min(cparams.n_ctx, cparams.n_ubatch);
+    if (cparams.kv_stream_verify_width > verify_limit) {
+        LLAMA_LOG_WARN("%s: streamed verify width %u clamped to %u\n", __func__,
+            cparams.kv_stream_verify_width, verify_limit);
+        cparams.kv_stream_verify_width = verify_limit;
+    }
+    if (cparams.kv_streaming()) {
+        LLAMA_LOG_INFO("%s: streamed verify width %u\n", __func__, cparams.kv_stream_verify_width);
+    }
     if (params.kv_stream_pool_bytes || params.shared_device_memory_bytes) {
         if (model.arch != LLM_ARCH_QWEN35 || params.ctx_type != LLAMA_CONTEXT_TYPE_DEFAULT || params.ctx_other ||
                 hparams.no_alloc || hparams.vocab_only || model.devices.size() != 1 || cparams.n_seq_max != 1 ||
@@ -473,6 +483,7 @@ llama_context::llama_context(
             params_mem.kv_stream_auxiliary_layers = cparams.kv_stream_auxiliary_layers;
             params_mem.kv_stream_rs_rollback = streamed_rs_rollback;
             params_mem.kv_stream_max_rows = cparams.n_ubatch;
+            params_mem.kv_stream_verify_width = cparams.kv_stream_verify_width;
             for (auto & backend : backends) if (ggml_backend_get_device(backend.get()) == model.devices.front().dev) {
                 params_mem.kv_stream_backend = backend.get(); break;
             }
@@ -846,21 +857,21 @@ void llama_context::sched_reserve() {
                 }
             }
         }
-        // Target verification and attached MTP catch-up both execute TG1-TG4.
-        // Include these graphs in their respective decode-phase grants.
-        if ((cparams.kv_stream_auxiliary_layers || cparams.mtp_publish_host) && n_seqs == 1) {
-            const uint32_t width = std::min(n_tokens, 4u);
-            if (width > 1) {
-                std::vector<size_t> verify_one(backend_ptrs.size());
-                std::vector<size_t> verify_all(backend_ptrs.size());
-                if (!graph_reserve(width, 1, 1, mctx.get(), true, verify_one.data()) ||
-                        !graph_reserve(width, 1, std::min(width, cparams.n_outputs_max),
-                            mctx.get(), true, verify_all.data())) return false;
-                for (size_t i = 0; i < backend_ptrs.size(); ++i)
-                    measurements[backend_ptrs.size() + i] = std::max(
-                        measurements[backend_ptrs.size() + i],
-                        std::max(verify_one[i], verify_all[i]));
-            }
+        // A verify batch runs a wider decode graph than the single-token TG path;
+        // include it in the decode-phase grant at the admitted width.
+        const uint32_t verify_width = cparams.kv_streaming() ?
+            cparams.kv_stream_verify_width : 4u;
+        if ((cparams.kv_streaming() || cparams.mtp_publish_host) && n_seqs == 1 && verify_width > 1) {
+            const uint32_t width = std::min(n_tokens, verify_width);
+            std::vector<size_t> verify_one(backend_ptrs.size());
+            std::vector<size_t> verify_all(backend_ptrs.size());
+            if (!graph_reserve(width, 1, 1, mctx.get(), true, verify_one.data()) ||
+                    !graph_reserve(width, 1, std::min(width, cparams.n_outputs_max),
+                        mctx.get(), true, verify_all.data())) return false;
+            for (size_t i = 0; i < backend_ptrs.size(); ++i)
+                measurements[backend_ptrs.size() + i] = std::max(
+                    measurements[backend_ptrs.size() + i],
+                    std::max(verify_one[i], verify_all[i]));
         }
         return prepare_compute_arenas(measurements, 2);
     };
@@ -2213,9 +2224,8 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
                 return -2;
             }
         }
-        const bool supported_verify = cparams.kv_stream_auxiliary_layers == 1 &&
-            text_phase == llama_memory_text_phase::decode &&
-            n_tokens_all >= 2 && n_tokens_all <= 4;
+        const bool supported_verify = text_phase == llama_memory_text_phase::decode &&
+            n_tokens_all >= 2 && n_tokens_all <= cparams.kv_stream_verify_width;
         const auto transitions = compute_memory->phase_transition_count();
         const auto phase_result = compute_memory->signal_text_phase({
             text_phase,
@@ -2232,8 +2242,8 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
         }
         if (compute_memory->phase_transition_count() != transitions) {
             auto reserve_context = memory->init_full();
-            const uint32_t decode_width = cparams.kv_stream_auxiliary_layers ?
-                std::min(4u, std::min(cparams.n_ctx, cparams.n_ubatch)) : cparams.n_seq_max;
+            const uint32_t decode_width = std::max(cparams.n_seq_max,
+                std::min(cparams.kv_stream_verify_width, std::min(cparams.n_ctx, cparams.n_ubatch)));
             const uint32_t reserve_tokens = text_phase == llama_memory_text_phase::decode ?
                 decode_width : std::min(cparams.n_ctx,cparams.n_ubatch);
             const uint32_t reserve_outputs = text_phase == llama_memory_text_phase::decode ?
@@ -4227,6 +4237,7 @@ llama_context_params llama_context_default_params() {
         /*.kv_stream_pool_bytes        =*/ 0,
         /*.shared_device_memory_bytes   =*/ 0,
         /*.kv_stream_auxiliary_layers   =*/ 0,
+        /*.kv_stream_verify_width       =*/ 1,
     };
 
     return result;
