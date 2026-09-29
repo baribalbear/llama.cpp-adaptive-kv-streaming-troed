@@ -30,6 +30,9 @@ public:
     // Apply deferred tensor writes when a consumer must validate restored backing before parsing completes.
     virtual void flush_tensor_reads() {}
 
+    // drop tensor data that has been read but not yet applied (e.g. when a restore fails)
+    virtual void discard() {}
+
     // bytes read so far
     virtual size_t n_bytes() = 0;
 

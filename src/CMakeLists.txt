@@ -8,95 +8,101 @@ llama_add_compile_flags()
 
 file(GLOB LLAMA_MODELS_SOURCES "models/*.cpp")
 
+set(LLAMA_CORE_SOURCES
+    llama.cpp
+    llama-adapter.cpp
+    llama-arch.cpp
+    llama-batch.cpp
+    llama-chat.cpp
+    llama-context.cpp
+    llama-cparams.cpp
+    llama-grammar.cpp
+    llama-graph.cpp
+    llama-hparams.cpp
+    llama-impl.cpp
+    llama-io.cpp
+    llama-kv-cache.cpp
+    llama-kv-cache-iswa.cpp
+    llama-kv-cache-dsa.cpp
+    llama-kv-cache-dsa-iswa.cpp
+    llama-kv-cache-msa.cpp
+    llama-kv-cache-dsv4.cpp
+    llama-memory.cpp
+    llama-memory-hybrid.cpp
+    llama-memory-hybrid-iswa.cpp
+    llama-memory-hybrid-idx.cpp
+    llama-memory-recurrent.cpp
+    llama-context-memory.cpp
+    llama-context-memory.h
+    llama-context-workspace.cpp
+    llama-context-workspace.h
+    llama-kv-stream-config.cpp
+    llama-kv-stream-config.h
+    llama-kv-stream-policy.cpp
+    llama-kv-stream-policy.h
+    llama-kv-stream-layer-lease.cpp
+    llama-kv-stream-layer-lease.h
+    llama-kv-stream-binding.cpp
+    llama-kv-stream-binding.h
+    llama-kv-stream-host.cpp
+    llama-kv-stream-host.h
+    llama-kv-stream-content.cpp
+    llama-kv-stream-content.h
+    llama-kv-stream-logical-cache.cpp
+    llama-kv-stream-logical-cache.h
+    llama-kv-stream-resident.cpp
+    llama-kv-stream-mtp-proxy.cpp
+    llama-kv-stream-mtp-proxy.h
+    llama-kv-stream-publication.cpp
+    llama-kv-stream-publication.h
+    llama-kv-stream-resident.h
+    llama-kv-stream-capture.cpp
+    llama-kv-stream-capture.h
+    llama-kv-stream-session.cpp
+    llama-kv-stream-session.h
+    llama-kv-stream-model.cpp
+    llama-kv-stream-model.h
+    llama-kv-stream-prefetch.h
+    llama-memory-completion.cpp
+    llama-memory-completion.h
+    llama-kv-stream-writer.cpp
+    llama-kv-stream-writer.h
+    llama-memory-executor.cpp
+    llama-memory-executor.h
+    llama-memory-executor-cuda.cpp
+    llama-memory-executor-cuda.h
+    llama-memory-workspace.cpp
+    llama-memory-workspace.h
+    llama-memory-transition.cpp
+    llama-memory-transition.h
+    llama-memory-layout.cpp
+    llama-memory-layout.h
+    llama-memory-budget.cpp
+    llama-memory-budget.h
+    llama-memory-phase.cpp
+    llama-memory-phase.h
+    llama-memory-phase-owner.cpp
+    llama-memory-phase-owner.h
+    llama-memory-plan.cpp
+    llama-memory-plan.h
+    llama-memory-requirements.cpp
+    llama-memory-requirements.h
+    llama-memory-recurrent-spill.cpp
+    llama-memory-recurrent-spill.h
+    llama-mmap.cpp
+    llama-model-loader.cpp
+    llama-model-saver.cpp
+    llama-model.cpp
+    llama-quant.cpp
+    llama-sampler.cpp
+    llama-vocab.cpp
+    unicode-data.cpp
+    unicode.cpp
+)
+
 add_library(llama
             ../include/llama.h
-            llama.cpp
-            llama-adapter.cpp
-            llama-arch.cpp
-            llama-batch.cpp
-            llama-chat.cpp
-            llama-context.cpp
-            llama-context-memory.cpp
-            llama-context-memory.h
-            llama-context-workspace.cpp
-            llama-context-workspace.h
-            llama-cparams.cpp
-            llama-grammar.cpp
-            llama-graph.cpp
-            llama-hparams.cpp
-            llama-impl.cpp
-            llama-io.cpp
-            llama-kv-cache.cpp
-            llama-kv-cache-iswa.cpp
-            llama-kv-cache-dsa.cpp
-            llama-kv-cache-msa.cpp
-            llama-kv-cache-dsv4.cpp
-            llama-memory.cpp
-            llama-kv-stream-config.cpp
-            llama-kv-stream-config.h
-            llama-kv-stream-policy.cpp
-            llama-kv-stream-policy.h
-            llama-kv-stream-layer-lease.cpp
-            llama-kv-stream-layer-lease.h
-            llama-kv-stream-binding.cpp
-            llama-kv-stream-binding.h
-            llama-kv-stream-host.cpp
-            llama-kv-stream-host.h
-            llama-kv-stream-content.cpp
-            llama-kv-stream-content.h
-            llama-kv-stream-logical-cache.cpp
-            llama-kv-stream-logical-cache.h
-            llama-kv-stream-resident.cpp
-            llama-kv-stream-mtp-proxy.cpp
-            llama-kv-stream-mtp-proxy.h
-            llama-kv-stream-publication.cpp
-            llama-kv-stream-publication.h
-            llama-kv-stream-resident.h
-            llama-kv-stream-capture.cpp
-            llama-kv-stream-capture.h
-            llama-kv-stream-session.cpp
-            llama-kv-stream-session.h
-            llama-kv-stream-model.cpp
-            llama-kv-stream-model.h
-            llama-kv-stream-prefetch.h
-            llama-memory-completion.cpp
-            llama-memory-completion.h
-            llama-kv-stream-writer.cpp
-            llama-kv-stream-writer.h
-            llama-memory-executor.cpp
-            llama-memory-executor.h
-            llama-memory-executor-cuda.cpp
-            llama-memory-executor-cuda.h
-            llama-memory-workspace.cpp
-            llama-memory-workspace.h
-            llama-memory-transition.cpp
-            llama-memory-transition.h
-            llama-memory-layout.cpp
-            llama-memory-layout.h
-            llama-memory-budget.cpp
-            llama-memory-budget.h
-            llama-memory-phase.cpp
-            llama-memory-phase.h
-            llama-memory-phase-owner.cpp
-            llama-memory-phase-owner.h
-            llama-memory-plan.cpp
-            llama-memory-plan.h
-            llama-memory-requirements.cpp
-            llama-memory-requirements.h
-            llama-memory-hybrid.cpp
-            llama-memory-hybrid-iswa.cpp
-            llama-memory-recurrent.cpp
-            llama-mmap.cpp
-            llama-model-loader.cpp
-            llama-memory-recurrent-spill.cpp
-            llama-memory-recurrent-spill.h
-            llama-model-saver.cpp
-            llama-model.cpp
-            llama-quant.cpp
-            llama-sampler.cpp
-            llama-vocab.cpp
-            unicode-data.cpp
-            unicode.cpp
+            ${LLAMA_CORE_SOURCES}
             unicode.h
             ${LLAMA_MODELS_SOURCES}
             )
@@ -105,14 +111,17 @@ set_target_properties(llama PROPERTIES
     VERSION ${LLAMA_VERSION_BASE}
     SOVERSION ${LLAMA_VERSION_MAJOR}
     MACHO_CURRENT_VERSION 0 # keep macOS linker from seeing oversized version number
+    UNITY_BUILD ON
+    UNITY_BUILD_BATCH_SIZE 16
 )
 
-target_compile_definitions(llama PRIVATE
-    LLAMA_VERSION="${LLAMA_VERSION}"
-    LLAMA_COMMIT="${LLAMA_BUILD_COMMIT}"
-)
+# exclude non-model sources from unity build
+set_source_files_properties(${LLAMA_CORE_SOURCES} ../include/llama.h unicode.h
+    PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 
-target_include_directories(llama PRIVATE .)
+configure_file(llama-version.h.in ${CMAKE_CURRENT_BINARY_DIR}/llama-version.h @ONLY)
+
+target_include_directories(llama PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(llama PUBLIC ../include)
 target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
 
