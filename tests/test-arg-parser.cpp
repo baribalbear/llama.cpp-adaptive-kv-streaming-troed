@@ -219,10 +219,18 @@ static void test(void) {
         common_params full_checkpoint;
         assert(common_params_parse(argv.size(),list_str_to_char(argv).data(),full_checkpoint,LLAMA_EXAMPLE_SERVER));
         assert(common_context_params_to_llama(full_checkpoint).n_rs_seq == 0);
+        for (const char * accepted : {"4", "5"}) {
+            common_params wide;
+            argv = {"binary_name","--shared-device-memory-mib","4096",
+                "--kv-stream-auxiliary-layers","1","--spec-type","draft-mtp",
+                "--spec-draft-n-max",accepted};
+            assert(common_params_parse(argv.size(),list_str_to_char(argv).data(),wide,LLAMA_EXAMPLE_SERVER));
+            assert(common_context_params_to_llama(wide).n_rs_seq == uint32_t(std::stoi(accepted)));
+        }
         for (const std::vector<std::string> & invalid_rollback : {
                 std::vector<std::string>{"binary_name","--shared-device-memory-mib","4096",
                     "--kv-stream-auxiliary-layers","1","--spec-type","draft-mtp",
-                    "--spec-draft-n-max","4"}}) {
+                    "--spec-draft-n-max","6"}}) {
             common_params rejected;
             argv = invalid_rollback;
             assert(!common_params_parse(argv.size(),list_str_to_char(argv).data(),rejected,LLAMA_EXAMPLE_SERVER));
