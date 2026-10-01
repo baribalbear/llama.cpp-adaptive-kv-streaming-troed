@@ -935,8 +935,10 @@ static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_t
     if (tensor->op == GGML_OP_FLASH_ATTN_EXT) {
         ggml_backend_buffer_t owner = nullptr;
         size_t owner_size = 0;
-        // A supported owner sizes its own op, including any internal scratch. Its answer is used
-        // only when it covers what the stock path would charge, so an owner can never under-size.
+        // A supported owner sizes its own op, including any internal scratch. Take its answer only
+        // when it covers the stock figure: an owner's figure can describe a tile workspace smaller
+        // than the attention output, and the floor keeps that safe. Today no owner exceeds stock,
+        // so this selects stock; it exists so a future owner can state a smaller real cost.
         if (ggml_backend_execution_owner(tensor, owner) && owner &&
                 ggml_backend_execution_supports(owner, ggml_backend_buft_get_device(buft), tensor)) {
             owner_size = ggml_backend_execution_alloc_size(owner, buft, tensor);

@@ -155,10 +155,10 @@ int main(int argc, char ** argv) {
         execution_probe probe;
         auto managed_ops = ops;
         managed_ops.supports = [](void *, const ggml_tensor * op) { return op->op == GGML_OP_FLASH_ATTN_EXT; };
-        // Answer only for a streamed query height, so the stock path stays observable for prefill.
+        // A deliberately tiny answer for a streamed query: the hook must floor it to stock.
         managed_ops.alloc_size = [](void *, ggml_backend_buffer_type_t, const ggml_tensor * op) -> size_t {
             if (!op->src[0] || op->src[0]->ne[1] > 8) return 0;
-            return 4096;
+            return 1;
         };
         ggml_backend_buffer_ptr backing(ggml_backend_alloc_buffer(backend.get(), 1 << 20));
         ggml_backend_buffer_ptr managed(ggml_backend_execution_buffer_new(dev, backing.get(), managed_ops, &probe));
@@ -179,7 +179,8 @@ int main(int argc, char ** argv) {
         auto * base = static_cast<char *>(ggml_backend_buffer_get_base(managed.get()));
         if (!t.assert_true(ggml_backend_tensor_alloc(managed.get(), k, base) == GGML_STATUS_SUCCESS &&
                 ggml_backend_tensor_alloc(managed.get(), v, base + ggml_nbytes(k)) == GGML_STATUS_SUCCESS)) return;
-        t.assert_equal(size_t(4096), ggml_backend_buft_get_alloc_size(buft, attention));
+        // An owner answer below stock is floored to stock; a wide query declines and also gets stock.
+        t.assert_equal(stock, ggml_backend_buft_get_alloc_size(buft, attention));
         t.assert_equal(stock_prefill, ggml_backend_buft_get_alloc_size(buft, prefill_attention));
         managed_ops.supports = [](void *, const ggml_tensor *) { return false; };
         ggml_backend_buffer_ptr unsupported(ggml_backend_execution_buffer_new(dev, backing.get(), managed_ops, &probe));
@@ -190,11 +191,11 @@ int main(int argc, char ** argv) {
         unsupported.reset(); managed.reset();
         t.assert_equal(2, probe.frees);
         // CPY has no execution owner, so the hook's attention guard keeps it off the stock
-        // attention path. A widened guard aborts there on the op assert, not returns 4096.
+        // attention path. A widened guard aborts there on the op assert, never returns the answer.
         auto owned_ops = ops;
         owned_ops.supports = [](void *, const ggml_tensor *) { return true; };
         owned_ops.alloc_size = [](void *, ggml_backend_buffer_type_t, const ggml_tensor *) -> size_t {
-            return 4096;
+            return 1;
         };
         ggml_backend_buffer_ptr delegating(ggml_backend_execution_buffer_new(dev, backing.get(), owned_ops, &probe));
         if (!t.assert_true(bool(delegating))) return;
@@ -204,7 +205,7 @@ int main(int argc, char ** argv) {
         t.assert_true(cpy && cpy->op == GGML_OP_CPY);
         if (!t.assert_true(ggml_backend_tensor_alloc(delegating.get(), k, base) == GGML_STATUS_SUCCESS &&
                 ggml_backend_tensor_alloc(delegating.get(), v, base + ggml_nbytes(k)) == GGML_STATUS_SUCCESS)) return;
-        t.assert_true(ggml_backend_buft_get_alloc_size(buft, cpy) != size_t(4096));
+        t.assert_true(ggml_backend_buft_get_alloc_size(buft, cpy) > size_t(1));
         k->buffer = v->buffer = nullptr;
         delegating.reset();
         t.assert_equal(3, probe.frees);
