@@ -4,6 +4,7 @@
 #include "fattn-tile.cuh"
 #include "fattn-vec.cuh"
 #include "fattn.cuh"
+#include "kv-stream-attention-dispatch.h"
 #include "../ggml-kv-stream-partial.h"
 
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
@@ -518,6 +519,7 @@ static void ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context & ctx, ggml_t
 namespace {
 struct mma_span_launch {
     dim3 blocks;
+    int ncols1 = 0;
     int ncols2 = 0;
     int ntiles_x = 0;
     int ntiles_z_gqa = 0;
@@ -559,7 +561,6 @@ static bool mma_span_launch_make(
 
     constexpr int DKQ = 256, DV = 256, ncols1 = GGML_KV_STREAM_SPAN_QUERY_WIDTH;
     const int gqa_ratio = int(q->ne[2]/k->ne[2]);
-    // Stock Blackwell uses eight columns for ratio six and masks the two padded heads.
     const int ncols2 = gqa_ratio > 4 ? 8 : 2, ncols = ncols1*ncols2;
     const int cc = ggml_cuda_info().devices[ctx.device].cc;
     if (!turing_mma_available(cc)) return false;
@@ -581,6 +582,7 @@ static bool mma_span_launch_make(
     const size_t shared_combine = size_t(nwarps)*cols_per_warp*(nbatch_combine+4)*sizeof(half2);
 
     mma_span_launch next;
+    next.ncols1 = ncols1;
     next.ncols2 = ncols2;
     next.shared_bytes = std::max(shared_combine,q_in_reg ?
         std::max(shared_q,shared_kv+shared_mask) : shared_q+shared_kv+shared_mask);
@@ -636,12 +638,12 @@ size_t ggml_cuda_flash_attn_ext_mma_f16_spans_workspace(
     return mma_span_launch_make(ctx,dst,spans,plan) ? plan.bytes : 0;
 }
 
-template<int ncols2>
+template<int ncols1, int ncols2>
 static bool ggml_cuda_flash_attn_ext_mma_f16_spans_case(
         ggml_backend_cuda_context & ctx, ggml_tensor * dst,
         const ggml_cuda_kv_span * spans, size_t count,
         void * workspace, const mma_span_launch & plan) {
-    constexpr int DKQ = 256, DV = 256, ncols1 = GGML_KV_STREAM_SPAN_QUERY_WIDTH;
+    constexpr int DKQ = 256, DV = 256;
     constexpr bool softcap = false, v_is_k = false;
     auto kernel = dst->src[1]->type == GGML_TYPE_Q8_0 ?
         flash_attn_ext_f16_spans<DKQ,DV,ncols1,ncols2,softcap,v_is_k,GGML_TYPE_Q8_0,GGML_TYPE_Q4_0> :
@@ -720,8 +722,8 @@ bool ggml_cuda_flash_attn_ext_mma_f16_spans(
     if (!spans || !workspace || !mma_span_launch_make(ctx,dst,count,plan) ||
             workspace_bytes < plan.bytes || uintptr_t(workspace)%128) return false;
     return plan.ncols2 == 8 ?
-        ggml_cuda_flash_attn_ext_mma_f16_spans_case<8>(ctx,dst,spans,count,workspace,plan) :
-        ggml_cuda_flash_attn_ext_mma_f16_spans_case<2>(ctx,dst,spans,count,workspace,plan);
+        ggml_cuda_flash_attn_ext_mma_f16_spans_case<GGML_KV_STREAM_SPAN_QUERY_WIDTH,8>(ctx,dst,spans,count,workspace,plan) :
+        ggml_cuda_flash_attn_ext_mma_f16_spans_case<GGML_KV_STREAM_SPAN_QUERY_WIDTH,2>(ctx,dst,spans,count,workspace,plan);
 }
 
 template<ggml_type type>
