@@ -155,6 +155,11 @@ int main(int argc, char ** argv) {
         execution_probe probe;
         auto managed_ops = ops;
         managed_ops.supports = [](void *, const ggml_tensor * op) { return op->op == GGML_OP_FLASH_ATTN_EXT; };
+        // Answer only for a streamed query height, so the stock path stays observable for prefill.
+        managed_ops.alloc_size = [](void *, ggml_backend_buffer_type_t, const ggml_tensor * op) -> size_t {
+            if (!op->src[0] || op->src[0]->ne[1] > 8) return 0;
+            return 4096;
+        };
         ggml_backend_buffer_ptr backing(ggml_backend_alloc_buffer(backend.get(), 1 << 20));
         ggml_backend_buffer_ptr managed(ggml_backend_execution_buffer_new(dev, backing.get(), managed_ops, &probe));
         if (!t.assert_true(bool(managed))) return;
@@ -174,7 +179,7 @@ int main(int argc, char ** argv) {
         auto * base = static_cast<char *>(ggml_backend_buffer_get_base(managed.get()));
         if (!t.assert_true(ggml_backend_tensor_alloc(managed.get(), k, base) == GGML_STATUS_SUCCESS &&
                 ggml_backend_tensor_alloc(managed.get(), v, base + ggml_nbytes(k)) == GGML_STATUS_SUCCESS)) return;
-        t.assert_equal(ggml_nbytes(attention), ggml_backend_buft_get_alloc_size(buft, attention));
+        t.assert_equal(size_t(4096), ggml_backend_buft_get_alloc_size(buft, attention));
         t.assert_equal(stock_prefill, ggml_backend_buft_get_alloc_size(buft, prefill_attention));
         managed_ops.supports = [](void *, const ggml_tensor *) { return false; };
         ggml_backend_buffer_ptr unsupported(ggml_backend_execution_buffer_new(dev, backing.get(), managed_ops, &probe));

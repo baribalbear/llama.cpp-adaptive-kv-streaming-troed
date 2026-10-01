@@ -24,3 +24,7 @@ GGML_API bool ggml_backend_execution_buffers_present();
 GGML_API bool ggml_backend_execution_owner(const ggml_tensor * op, ggml_backend_buffer_t & owner);
 GGML_API bool ggml_backend_execution_supports(ggml_backend_buffer_t owner, ggml_backend_dev_t device, const ggml_tensor * op);
 GGML_API ggml_status ggml_backend_execution_compute(ggml_backend_buffer_t owner, ggml_backend_t backend, ggml_tensor * op);
+// Bytes the owning context needs to execute the op, including internal scratch. Returns 0
+// when the owner declines or has no alloc_size callback; the caller then uses stock sizing.
+GGML_API size_t ggml_backend_execution_alloc_size(ggml_backend_buffer_t owner,
+        ggml_backend_buffer_type_t buft, const ggml_tensor * op);

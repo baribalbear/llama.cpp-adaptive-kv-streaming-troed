@@ -934,16 +934,15 @@ static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_t
     size_t size = ggml_nbytes(tensor);
     if (tensor->op == GGML_OP_FLASH_ATTN_EXT) {
         ggml_backend_buffer_t owner = nullptr;
-        // A supported execution owner runs a bounded-streamed attention from its own scratch
-        // (span descriptors, not materialised K/V), so no stock K/V extras are charged. The
-        // width bound is explicit because ggml_backend_execution_ops has no capability query:
-        // an owner's supports() only says "this op is mine", not "up to how many rows". Charging
-        // extras by prior default is what made wide verify cost a whole layer's K/V as f16.
-        if (!tensor->src[0] || tensor->src[0]->ne[1] > GGML_KV_STREAM_SPAN_QUERY_WIDTH ||
-                !ggml_backend_execution_owner(tensor, owner) || !owner ||
-                !ggml_backend_execution_supports(owner, ggml_backend_buft_get_device(buft), tensor)) {
-            size = ggml_cuda_flash_attn_ext_get_alloc_size(buft_ctx->device, tensor);
+        size_t owner_size = 0;
+        // A supported owner sizes its own op, including any internal scratch; its answer is
+        // authoritative. No owner, or a declined answer, falls back to stock sizing.
+        if (ggml_backend_execution_owner(tensor, owner) && owner &&
+                ggml_backend_execution_supports(owner, ggml_backend_buft_get_device(buft), tensor)) {
+            owner_size = ggml_backend_execution_alloc_size(owner, buft, tensor);
         }
+        size = owner_size ? owner_size
+                          : ggml_cuda_flash_attn_ext_get_alloc_size(buft_ctx->device, tensor);
     }
     int64_t ne0 = tensor->ne[0];
 
