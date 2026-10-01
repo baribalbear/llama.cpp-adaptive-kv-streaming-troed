@@ -857,9 +857,12 @@ void llama_context::sched_reserve() {
                 }
             }
         }
-        // A verify batch runs a wider decode graph than the single-token TG path;
-        // include it in the decode-phase grant at the admitted width.
-        const uint32_t verify_width = cparams.kv_streaming() ?
+        // A verify batch runs a wider decode graph than the single-token TG path. The streamed
+        // target and the attached draft grant at their own admitted widths; a context without
+        // one covers the widest chain the lease admits. A width the span kernels cover runs from
+        // the stream model's own tile workspace, so reserving a graph for it would charge the
+        // scheduler's f16 estimate of one whole layer for a batch that never gathers.
+        const uint32_t verify_width = cparams.kv_streaming() || cparams.mtp_publish_host ?
             cparams.kv_stream_verify_width : LLAMA_KV_STREAM_MTP_DRAFT_MAX + 1;
         if ((cparams.kv_streaming() || cparams.mtp_publish_host) && n_seqs == 1 && verify_width > 1) {
             const uint32_t width = std::min(n_tokens, verify_width);
@@ -4438,7 +4441,7 @@ static llama_kv_stream_model * llama_mtp_target_stream(llama_context * ctx) {
 }
 
 bool llama_kv_stream_mtp_prepare(llama_context * ctx, uint32_t future_tokens) {
-    if (!ctx || future_tokens > LLAMA_KV_STREAM_MTP_DRAFT_MAX) return false;
+    if (!ctx || future_tokens > KV_STREAM_SPAN_QUERY_WIDTH) return false;
     if (!ctx->get_cparams().kv_stream_auxiliary_layers) return true;
     auto * stream = llama_mtp_target_stream(ctx);
     const auto cache = stream ? stream->auxiliary_cache() : nullptr;

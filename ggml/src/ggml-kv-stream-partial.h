@@ -5,6 +5,10 @@
 #include <limits>
 #include <vector>
 
+// Widest streamed query batch the span MMA kernels cover. The vector span path covers 1-2; a
+// wider batch gathers the whole layer layout into the grant instead of a tile workspace.
+#define GGML_KV_STREAM_SPAN_QUERY_WIDTH 8
+
 // Natural-exponential coordinates: numerator=sum(exp(score-max_logit)*V), normalizer=sum(exp(score-max_logit)).
 // Matches the two-float CUDA metadata record without depending on CUDA headers.
 struct alignas(8) ggml_kv_stream_partial_meta {
