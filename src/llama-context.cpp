@@ -2205,9 +2205,10 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
     }
     if (draft_graph_rebuild) {
         auto reserve_context = memory->init_full();
+        const uint32_t decode_width = std::max(cparams.n_seq_max,
+            std::min(cparams.kv_stream_verify_width, std::min(cparams.n_ctx, cparams.n_ubatch)));
         const uint32_t reserve_tokens = text_phase == llama_memory_text_phase::decode ?
-            std::min(4u, std::min(cparams.n_ctx, cparams.n_ubatch)) :
-            std::min(cparams.n_ctx, cparams.n_ubatch);
+            decode_width : std::min(cparams.n_ctx, cparams.n_ubatch);
         const uint32_t reserve_outputs = std::min(reserve_tokens, cparams.n_outputs_max);
         if (!reserve_context || !graph_reserve(reserve_tokens, 1, reserve_outputs,
                 reserve_context.get())) {
