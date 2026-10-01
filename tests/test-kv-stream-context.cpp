@@ -534,7 +534,7 @@ int main(int argc,char ** argv) {
             compare("prefill", 7931, 1);
             const std::vector<llama_token> continuation{264,4927,5253,383,2919,4802,11,4927,5253,383,4128,958,11,4927,5253,383};
             const size_t width = std::getenv("LLAMA_DIAG_QUERY_WIDTH") ? size_t(std::atoi(std::getenv("LLAMA_DIAG_QUERY_WIDTH"))) : 2;
-            if (!t.assert_true(width >= 1 && width <= 4)) return;
+            if (!t.assert_true(width >= 1 && width <= GGML_KV_STREAM_SPAN_QUERY_WIDTH)) return;
             for (size_t first = 0; first < continuation.size(); first += width) {
                 const size_t count = std::min(width, continuation.size()-first);
                 const auto save = [&](llama_context * ctx) {
