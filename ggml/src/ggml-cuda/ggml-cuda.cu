@@ -934,17 +934,14 @@ static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_t
     size_t size = ggml_nbytes(tensor);
     if (tensor->op == GGML_OP_FLASH_ATTN_EXT) {
         ggml_backend_buffer_t owner = nullptr;
-        size_t owner_size = 0;
-        // A supported owner sizes its own op, including any internal scratch. Take its answer only
-        // when it covers the stock figure: an owner's figure can describe a tile workspace smaller
-        // than the attention output, and the floor keeps that safe. Today no owner exceeds stock,
-        // so this selects stock; it exists so a future owner can state a smaller real cost.
-        if (ggml_backend_execution_owner(tensor, owner) && owner &&
-                ggml_backend_execution_supports(owner, ggml_backend_buft_get_device(buft), tensor)) {
-            owner_size = ggml_backend_execution_alloc_size(owner, buft, tensor);
+        // A streamed batch runs from the stream model's own tile workspace, so it needs no K/V
+        // extras; that covers the vector path (1-2 rows) and the span path (up to the span
+        // width). Wider batches and plain prefill enter stock attention and need its extras.
+        if (!tensor->src[0] || tensor->src[0]->ne[1] > GGML_KV_STREAM_SPAN_QUERY_WIDTH ||
+                !ggml_backend_execution_owner(tensor, owner) || !owner ||
+                !ggml_backend_execution_supports(owner, ggml_backend_buft_get_device(buft), tensor)) {
+            size = ggml_cuda_flash_attn_ext_get_alloc_size(buft_ctx->device, tensor);
         }
-        const size_t stock = ggml_cuda_flash_attn_ext_get_alloc_size(buft_ctx->device, tensor);
-        size = owner_size >= stock ? owner_size : stock;
     }
     int64_t ne0 = tensor->ne[0];
 

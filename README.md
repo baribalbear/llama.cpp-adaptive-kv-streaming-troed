@@ -15,16 +15,64 @@ Additions in this fork:
   `--spec-type ngram-simple,draft-mtp` (any `ngram-*` type works) lets the ngram
   drafter propose the wide round and the MTP head the narrow one, sharing one
   target pool [^1].
+- Attached MTP accepts more than three draft tokens: `--spec-draft-n-max` may be
+  raised to 5, and the streams a span-covered verify needs come from the stream
+  model's own tile workspace, so depth costs a few MiB rather than a whole layer
+  of f16 attention scratch [^2].
 
 Previous fork of Raymond's v1 + ejectable MTP/DFlash2 and ngram-* is on [this branch](https://github.com/troed/llama.cpp-adaptive-kv-streaming/tree/feature/kv-stream-phase-arena-spec)
 
 [^1]: The streamed verify width is derived from the configured speculators, one
 plus the widest draft any of them can produce, and clamped to the context and
 ubatch, so a wide ngram draft needs an ubatch at least that large (the load is
-refused otherwise). A verify batch above four tokens gathers the layer's full
-K/V layout into the attention grant; on the shared-arena path that is paid by
-the phase arena rather than by extra VRAM, so the decode phase keeps a smaller
-KV pool and the arena may need raising.
+refused otherwise). A verify batch a span kernel covers runs from the stream
+model's own tile workspace, so on the shared-arena path the decode phase keeps
+its KV pool.
+
+## Attached MTP depth: MTP3 against MTP5
+
+Both columns are the same fork, the same build, the same single GPU arena, and
+the same model, measured at temperature 0. MTP5 means `--spec-draft-n-max 5`; MTP3
+is the depth Raymond's branch supports. Both use `--spec-draft-p-min 0.7` [^2].
+
+Decode, tokens per second:
+
+| Context | MTP3 | MTP5 |
+| --- | --- | --- |
+| 40k | 62.74 | 59.75 |
+| 80k | 41.83 | 44.93 |
+| 120k | 36.43 | 37.24 |
+| 160k | 40.50 | 48.56 |
+
+Prefill, tokens per second - the depth does not reach this path:
+
+| Context | MTP3 | MTP5 |
+| --- | --- | --- |
+| 40k | 761.6 | 759.2 |
+| 80k | 657.0 | 653.4 |
+| 120k | 558.6 | 558.0 |
+| 160k | 481.7 | 480.8 |
+
+Decode memory and draft quality at 160k:
+
+| | MTP3 | MTP5 |
+| --- | --- | --- |
+| Decode compute lease | 17.6 MiB | 24.6 MiB |
+| Resident KV pages | 575 | 574 |
+| Decode KV pool | 3978 MiB | 3971 MiB |
+| Draft acceptance | 0.981 | 1.000 |
+| Realized verify width | 3.85 | 5.95 |
+| Cost per forward | 93.72 ms | 122.40 ms |
+
+Two extra draft levels cost 7 MiB. Accepted tokens decide the rate, not width:
+MTP5 spends more per forward and only wins where the extra rows are accepted, so
+at 40k it accepts less and trails MTP3, while at 160k it accepts every drafted
+row and leads by 20 percent.
+
+[^2]: `--spec-draft-p-min` is the draft's minimum sampling probability. The
+measured rows above use the preset's 0.7. A different value changes how often the
+draft continues, so it moves acceptance and realized width, and the tables are
+not comparable across values.
 
 ---
 
