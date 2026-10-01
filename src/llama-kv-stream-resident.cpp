@@ -2,6 +2,7 @@
 #include "llama-kv-stream-layer-lease.h"
 #include "ggml-cpp.h"
 #include "llama-kv-stream-writer.h"
+#include "../ggml/src/ggml-kv-stream-partial.h"
 #include "../ggml/src/ggml-kv-stream-device.h"
 #include "../ggml/src/ggml-kv-stream-copy.h"
 #include "llama-kv-stream-prefetch.h"
@@ -1040,7 +1041,7 @@ bool llama_kv_stream_resident::compute_streamed(uint32_t layer, ggml_tensor * q,
         (s.binding.config.shape.type_k == GGML_TYPE_Q8_0 && s.binding.config.shape.type_v == GGML_TYPE_Q4_0) ||
         (s.binding.config.shape.type_k == GGML_TYPE_F16 && s.binding.config.shape.type_v == GGML_TYPE_F16);
     const bool segmented = span_shape && s.native_graph_attention && cross && !s.fallback &&
-        q->ne[1] <= 4 && blocks <= slots && ops->version >= 8 && ops->spans && ops->spans_workspace &&
+        q->ne[1] <= int64_t(GGML_KV_STREAM_SPAN_QUERY_WIDTH) && blocks <= slots && ops->version >= 8 && ops->spans && ops->spans_workspace &&
         (prefix == padded || !resumed);
     const bool native = s.native_graph_attention && !resumed;
     if (ggml_kv_stream_block_layout_make(size_t(q->ne[1])*size_t(q->ne[2]),size_t(output->ne[0]),work).status !=

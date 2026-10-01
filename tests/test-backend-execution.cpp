@@ -20,8 +20,12 @@ static const ggml_backend_execution_ops ops{
     [](void * p,ggml_backend_t,ggml_tensor *) { ++static_cast<execution_probe *>(p)->computes; return GGML_STATUS_SUCCESS; },
     [](void *) { return true; },
     [](void * p) { ++static_cast<execution_probe *>(p)->writes; },
-    [](void * p) { ++static_cast<execution_probe *>(p)->frees; }
+    [](void * p) { ++static_cast<execution_probe *>(p)->frees; },
+    [](void *, ggml_backend_buffer_type_t, const ggml_tensor *) { return size_t(0); }
 };
+static_assert(std::is_same_v<decltype(ggml_backend_execution_ops::alloc_size),
+    size_t (*)(void *, ggml_backend_buffer_type_t, const ggml_tensor *)>,
+    "execution ops must expose a trailing alloc_size callback");
 int main(int argc, char ** argv) {
     testing t;
     ggml_backend_ptr backend(ggml_backend_cpu_init());
@@ -151,6 +155,11 @@ int main(int argc, char ** argv) {
         execution_probe probe;
         auto managed_ops = ops;
         managed_ops.supports = [](void *, const ggml_tensor * op) { return op->op == GGML_OP_FLASH_ATTN_EXT; };
+        // A deliberately tiny answer for a streamed query: the hook must floor it to stock.
+        managed_ops.alloc_size = [](void *, ggml_backend_buffer_type_t, const ggml_tensor * op) -> size_t {
+            if (!op->src[0] || op->src[0]->ne[1] > 8) return 0;
+            return 1;
+        };
         ggml_backend_buffer_ptr backing(ggml_backend_alloc_buffer(backend.get(), 1 << 20));
         ggml_backend_buffer_ptr managed(ggml_backend_execution_buffer_new(dev, backing.get(), managed_ops, &probe));
         if (!t.assert_true(bool(managed))) return;
@@ -170,7 +179,8 @@ int main(int argc, char ** argv) {
         auto * base = static_cast<char *>(ggml_backend_buffer_get_base(managed.get()));
         if (!t.assert_true(ggml_backend_tensor_alloc(managed.get(), k, base) == GGML_STATUS_SUCCESS &&
                 ggml_backend_tensor_alloc(managed.get(), v, base + ggml_nbytes(k)) == GGML_STATUS_SUCCESS)) return;
-        t.assert_equal(ggml_nbytes(attention), ggml_backend_buft_get_alloc_size(buft, attention));
+        // An owner answer below stock is floored to stock; a wide query declines and also gets stock.
+        t.assert_equal(stock, ggml_backend_buft_get_alloc_size(buft, attention));
         t.assert_equal(stock_prefill, ggml_backend_buft_get_alloc_size(buft, prefill_attention));
         managed_ops.supports = [](void *, const ggml_tensor *) { return false; };
         ggml_backend_buffer_ptr unsupported(ggml_backend_execution_buffer_new(dev, backing.get(), managed_ops, &probe));
@@ -180,6 +190,25 @@ int main(int argc, char ** argv) {
         k->buffer = v->buffer = nullptr;
         unsupported.reset(); managed.reset();
         t.assert_equal(2, probe.frees);
+        // CPY has no execution owner, so the hook's attention guard keeps it off the stock
+        // attention path. A widened guard aborts there on the op assert, never returns the answer.
+        auto owned_ops = ops;
+        owned_ops.supports = [](void *, const ggml_tensor *) { return true; };
+        owned_ops.alloc_size = [](void *, ggml_backend_buffer_type_t, const ggml_tensor *) -> size_t {
+            return 1;
+        };
+        ggml_backend_buffer_ptr delegating(ggml_backend_execution_buffer_new(dev, backing.get(), owned_ops, &probe));
+        if (!t.assert_true(bool(delegating))) return;
+        auto * cpy_src = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, 4);
+        auto * cpy_dst = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, 4);
+        auto * cpy = ggml_cpy(ctx.get(), cpy_src, cpy_dst);
+        t.assert_true(cpy && cpy->op == GGML_OP_CPY);
+        if (!t.assert_true(ggml_backend_tensor_alloc(delegating.get(), k, base) == GGML_STATUS_SUCCESS &&
+                ggml_backend_tensor_alloc(delegating.get(), v, base + ggml_nbytes(k)) == GGML_STATUS_SUCCESS)) return;
+        t.assert_true(ggml_backend_buft_get_alloc_size(buft, cpy) > size_t(1));
+        k->buffer = v->buffer = nullptr;
+        delegating.reset();
+        t.assert_equal(3, probe.frees);
     });
     return t.summary();
 }

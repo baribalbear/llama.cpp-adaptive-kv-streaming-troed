@@ -1,4 +1,5 @@
 #include "llama-kv-stream-model.h"
+#include "llama.h"
 #include "llama-kv-stream-logical-cache.h"
 #include "../ggml/src/ggml-backend-execution.h"
 #include "../ggml/src/ggml-kv-stream-device.h"
@@ -14,9 +15,6 @@ using mtp_lease_ptr = std::unique_ptr<llama_kv_stream_complete_layer_lease,
     decltype(&llama_kv_stream_complete_layer_lease_free)>;
 using model_lease_ptr = std::unique_ptr<ggml_backend_memory_lease,decltype(&ggml_backend_memory_lease_free)>;
 static std::atomic<uint64_t> model_cache_id{1};
-
-// Span execution covers query widths 1-2 (vector) and 3-4 (MMA); a wider verify gathers.
-constexpr uint32_t KV_STREAM_SPAN_QUERY_WIDTH = 4;
 
 struct llama_kv_stream_model::implementation {
     llama_kv_stream_model_config config;
@@ -211,6 +209,12 @@ struct llama_kv_stream_model::implementation {
             default: return false;
         }
     }
+    // Answer with the tile figure the arena already reserved, for an attention op this owner streams.
+    size_t attention_alloc_size(const ggml_tensor * t) const {
+        if (t->op != GGML_OP_FLASH_ATTN_EXT || !supports(t) ||
+                t->src[0]->ne[1] > KV_STREAM_SPAN_QUERY_WIDTH) return 0;
+        return decode_bytes;
+    }
     // Validate actual SET_ROWS coordinates once per input buffer per append, not once per layer.
     bool validate_indices(const ggml_tensor * tensor) {
         if (std::find(checked_indices.begin(),checked_indices.end(),tensor->data) != checked_indices.end()) return true;
@@ -401,7 +405,12 @@ std::unique_ptr<llama_kv_stream_model> llama_kv_stream_model::create(const llama
             },
             [](void * p) { auto & s = **static_cast<std::shared_ptr<implementation> *>(p); return !s.session || !s.session->active(); },
             [](void * p) { (*static_cast<std::shared_ptr<implementation> *>(p))->modified(); },
-            [](void * p) { delete static_cast<std::shared_ptr<implementation> *>(p); }
+            [](void * p) { delete static_cast<std::shared_ptr<implementation> *>(p); },
+            [](void * p,ggml_backend_buffer_type_t buft,const ggml_tensor * t) -> size_t {
+                auto & s = **static_cast<std::shared_ptr<implementation> *>(p);
+                GGML_UNUSED(buft);
+                return s.attention_alloc_size(t);
+            }
         };
         auto owner = std::make_unique<std::shared_ptr<implementation>>(s);
         std::unique_ptr<llama_kv_stream_model> result(new llama_kv_stream_model);
@@ -429,7 +438,7 @@ bool llama_kv_stream_model::acquire_mtp_layer(size_t future_tokens) {
     const size_t target_tokens = s.session->tokens();
     const size_t mtp_tokens = mtp->tokens();
     if (mtp_tokens < 4 || mtp_tokens > target_tokens) return false;
-    if (target_tokens > s.config.host.context_tokens || future_tokens > 4 ||
+    if (target_tokens > s.config.host.context_tokens || future_tokens > KV_STREAM_SPAN_QUERY_WIDTH ||
             future_tokens > s.config.host.context_tokens - target_tokens) return false;
     const size_t reserved_tokens = target_tokens + future_tokens;
     const uint32_t physical_layer = s.config.host.layers;
@@ -472,8 +481,8 @@ bool llama_kv_stream_model::acquire_mtp_layer(size_t future_tokens) {
         ~admission_guard() { if (!adopted) session->set_ring_guard({}); }
     } admission{s.session.get()};
     std::vector<mtp_lease_ptr> plans;
-    plans.reserve(4);
-    for (uint32_t width = 1; width <= 4; ++width) {
+    plans.reserve(KV_STREAM_SPAN_QUERY_WIDTH);
+    for (uint32_t width = 1; width <= KV_STREAM_SPAN_QUERY_WIDTH; ++width) {
         const llama_kv_stream_complete_layer_request request{
             physical_layer, width, revision, generation, mtp->identity().id, mtp_tokens};
         auto * raw = width == 1 ?
@@ -501,7 +510,7 @@ bool llama_kv_stream_model::acquire_mtp_layer(size_t future_tokens) {
 
 bool llama_kv_stream_model::advance_mtp_layer_tail() {
     auto & s = *impl;
-    if (!s.session || !s.mtp_owner || !s.mtp_guard || s.mtp_plans.size() != 4 ||
+    if (!s.session || !s.mtp_owner || !s.mtp_guard || s.mtp_plans.size() != KV_STREAM_SPAN_QUERY_WIDTH ||
             !s.auxiliary_cache || !complete() ||
             s.session->layout_revision() != s.mtp_owner->layout_revision()) return false;
     const auto cache = s.auxiliary_cache;
@@ -515,8 +524,8 @@ bool llama_kv_stream_model::advance_mtp_layer_tail() {
     // Allocation can fail after the tail copy. Keep the old (now invalid) handles
     // until all replacements exist; a retry here will not repeat the H2D transfer.
     std::vector<mtp_lease_ptr> refreshed;
-    refreshed.reserve(4);
-    for (uint32_t width = 1; width <= 4; ++width) {
+    refreshed.reserve(KV_STREAM_SPAN_QUERY_WIDTH);
+    for (uint32_t width = 1; width <= KV_STREAM_SPAN_QUERY_WIDTH; ++width) {
         const llama_kv_stream_complete_layer_request request{
             s.config.host.layers, width, s.session->layout_revision(),
             generation, cache->identity().id, cache->tokens()};
@@ -534,7 +543,7 @@ bool llama_kv_stream_model::stage_mtp_tail_async(
         llama_kv_stream_population_stats & staged) {
     auto & s = *impl;
     return backend && s.session && s.mtp_owner && s.mtp_guard &&
-        s.mtp_plans.size() == 4 && s.auxiliary_cache &&
+        s.mtp_plans.size() == KV_STREAM_SPAN_QUERY_WIDTH && s.auxiliary_cache &&
         s.auxiliary_cache->tokens() == first &&
         s.session->layout_revision() == s.mtp_owner->layout_revision() &&
         s.mtp_owner->stage_tail_async(backend, s.mtp_plans.front().get(),
@@ -545,7 +554,7 @@ llama_kv_stream_complete_layer_lease_t llama_kv_stream_model::provisional_mtp_la
         uint32_t query_tokens, size_t active_tokens) {
     auto & s = *impl;
     if (!s.session || !s.mtp_owner || !s.mtp_guard || !s.auxiliary_cache ||
-            s.mtp_plans.size() != 4 || !query_tokens || query_tokens > 4 ||
+            s.mtp_plans.size() != KV_STREAM_SPAN_QUERY_WIDTH || !query_tokens || query_tokens > KV_STREAM_SPAN_QUERY_WIDTH ||
             active_tokens <= s.auxiliary_cache->tokens() ||
             active_tokens > s.mtp_reserved_tokens ||
             s.session->layout_revision() != s.mtp_owner->layout_revision()) return nullptr;
@@ -557,7 +566,7 @@ llama_kv_stream_complete_layer_lease_t llama_kv_stream_model::provisional_mtp_la
 bool llama_kv_stream_model::advance_mtp_layer_tail_staged(
         const llama_kv_stream_population_stats & staged) {
     auto & s = *impl;
-    if (!s.session || !s.mtp_owner || !s.mtp_guard || s.mtp_plans.size() != 4 ||
+    if (!s.session || !s.mtp_owner || !s.mtp_guard || s.mtp_plans.size() != KV_STREAM_SPAN_QUERY_WIDTH ||
             !s.auxiliary_cache || !complete() ||
             s.session->layout_revision() != s.mtp_owner->layout_revision()) return false;
     const auto cache = s.auxiliary_cache;
@@ -567,8 +576,8 @@ bool llama_kv_stream_model::advance_mtp_layer_tail_staged(
             !s.mtp_owner->adopt_staged_tail(s.mtp_plans.front().get(), *cache, staged))
         return false;
     std::vector<mtp_lease_ptr> refreshed;
-    refreshed.reserve(4);
-    for (uint32_t width = 1; width <= 4; ++width) {
+    refreshed.reserve(KV_STREAM_SPAN_QUERY_WIDTH);
+    for (uint32_t width = 1; width <= KV_STREAM_SPAN_QUERY_WIDTH; ++width) {
         const llama_kv_stream_complete_layer_request request{
             s.config.host.layers, width, s.session->layout_revision(),
             generation, cache->identity().id, cache->tokens()};
@@ -588,14 +597,14 @@ bool llama_kv_stream_model::truncate_mtp_layer(size_t tokens) {
     if (tokens == cache->tokens()) return true;
     if (!s.mtp_owner) return cache->truncate(tokens);
     if (!s.session || s.session->layout_revision() != s.mtp_owner->layout_revision() ||
-            s.mtp_plans.size() != 4) return false;
+            s.mtp_plans.size() != KV_STREAM_SPAN_QUERY_WIDTH) return false;
     if (!cache->truncate(tokens)) return false;
     if (tokens < 4 || !s.mtp_owner->adopt_truncated_prefix(
             s.mtp_plans.front().get(), *cache)) return release_mtp_layer();
     try {
         std::vector<mtp_lease_ptr> refreshed;
-        refreshed.reserve(4);
-        for (uint32_t width = 1; width <= 4; ++width) {
+        refreshed.reserve(KV_STREAM_SPAN_QUERY_WIDTH);
+        for (uint32_t width = 1; width <= KV_STREAM_SPAN_QUERY_WIDTH; ++width) {
             const llama_kv_stream_complete_layer_request request{
                 s.config.host.layers, width, s.session->layout_revision(),
                 cache->identity().generation, cache->identity().id, tokens};

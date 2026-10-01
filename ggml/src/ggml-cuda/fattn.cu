@@ -4,6 +4,7 @@
 #include "fattn-tile.cuh"
 #include "fattn-vec.cuh"
 #include "fattn.cuh"
+#include "../ggml-kv-stream-partial.h"
 
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 // one list per group of ncols1 queries: a column is selected if any query of the group can see it
@@ -544,7 +545,7 @@ static bool mma_span_launch_make(
             !((k->type == GGML_TYPE_F16 && v->type == GGML_TYPE_F16) ||
               (k->type == GGML_TYPE_Q8_0 && v->type == GGML_TYPE_Q4_0)) ||
             dst->type != GGML_TYPE_F32 || q->ne[0] != 256 || v->ne[0] != 256 ||
-            k->ne[0] != 256 || (q->ne[1] != 3 && q->ne[1] != 4) ||
+            k->ne[0] != 256 || q->ne[1] < 3 || q->ne[1] > GGML_KV_STREAM_SPAN_QUERY_WIDTH ||
             k->ne[2] <= 0 || v->ne[2] != k->ne[2] || q->ne[2] <= 0 ||
             q->ne[2]%k->ne[2] ||
             (q->ne[2]/k->ne[2] != 2 && q->ne[2]/k->ne[2] != 6 && q->ne[2]/k->ne[2] != 8) ||
@@ -556,7 +557,7 @@ static bool mma_span_launch_make(
     memcpy(params,dst->op_params,sizeof(params));
     if (!std::isfinite(params[0]) || params[0] <= 0 || params[1] != 0 || params[2] != 0) return false;
 
-    constexpr int DKQ = 256, DV = 256, ncols1 = 4;
+    constexpr int DKQ = 256, DV = 256, ncols1 = GGML_KV_STREAM_SPAN_QUERY_WIDTH;
     const int gqa_ratio = int(q->ne[2]/k->ne[2]);
     // Stock Blackwell uses eight columns for ratio six and masks the two padded heads.
     const int ncols2 = gqa_ratio > 4 ? 8 : 2, ncols = ncols1*ncols2;
@@ -640,7 +641,7 @@ static bool ggml_cuda_flash_attn_ext_mma_f16_spans_case(
         ggml_backend_cuda_context & ctx, ggml_tensor * dst,
         const ggml_cuda_kv_span * spans, size_t count,
         void * workspace, const mma_span_launch & plan) {
-    constexpr int DKQ = 256, DV = 256, ncols1 = 4;
+    constexpr int DKQ = 256, DV = 256, ncols1 = GGML_KV_STREAM_SPAN_QUERY_WIDTH;
     constexpr bool softcap = false, v_is_k = false;
     auto kernel = dst->src[1]->type == GGML_TYPE_Q8_0 ?
         flash_attn_ext_f16_spans<DKQ,DV,ncols1,ncols2,softcap,v_is_k,GGML_TYPE_Q8_0,GGML_TYPE_Q4_0> :

@@ -1063,12 +1063,12 @@ private:
         if (streamed_mtp && (!streaming || !spec_mtp || has_draft ||
                 std::any_of(params.speculative.types.begin(), params.speculative.types.end(),
                     unsupported_type) || params.n_parallel != 1 ||
-                params.speculative.draft.n_max < 1 || params.speculative.draft.n_max > 4 ||
+                params.speculative.draft.n_max < 1 || params.speculative.draft.n_max > LLAMA_KV_STREAM_MTP_DRAFT_MAX ||
                 params.cache_type_k != GGML_TYPE_Q8_0 || params.cache_type_v != GGML_TYPE_Q4_0)) {
-            SRV_ERR("%s", "adaptive MTP currently requires serial embedded Qwen MTP with optional ngram self-speculation, 1-4 draft tokens, Q8_0 K/Q4_0 V, and an explicit KV stream pool or arena\n");
+            SRV_ERR("%s", "adaptive MTP currently requires serial embedded Qwen MTP with optional ngram self-speculation, 1-5 draft tokens, Q8_0 K/Q4_0 V, and an explicit KV stream pool or arena\n");
             return false;
         }
-        if (streaming && !streamed_mtp) {
+        if (streaming) {
             // A streamed verify batch is one ubatch; a wider draft is rejected after the load.
             const int32_t draft_max = common_speculative_n_max(&params_base.speculative);
             const uint32_t ubatch = params_base.n_ubatch ? params_base.n_ubatch : params_base.n_batch;

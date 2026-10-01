@@ -362,9 +362,15 @@ int main(int argc,char ** argv) {
             context_ptr unsafe(llama_init_from_model(model.get(),invalid),llama_free);
             t.assert_true(!unsafe);
             invalid=p;
-            invalid.n_rs_seq=4;
+            invalid.n_rs_seq=LLAMA_KV_STREAM_MTP_DRAFT_MAX + 1;
             context_ptr too_deep(llama_init_from_model(model.get(),invalid),llama_free);
             t.assert_true(!too_deep);
+            {
+                auto widest=p;
+                widest.n_rs_seq=LLAMA_KV_STREAM_MTP_DRAFT_MAX;
+                context_ptr deep(llama_init_from_model(model.get(),widest),llama_free);
+                t.assert_true(bool(deep));
+            }
             context_ptr ctx(llama_init_from_model(model.get(),p),llama_free);
             if (!t.assert_true(bool(ctx))) return;
             t.assert_equal(uint32_t(3),llama_n_rs_seq(ctx.get()));
@@ -528,7 +534,7 @@ int main(int argc,char ** argv) {
             compare("prefill", 7931, 1);
             const std::vector<llama_token> continuation{264,4927,5253,383,2919,4802,11,4927,5253,383,4128,958,11,4927,5253,383};
             const size_t width = std::getenv("LLAMA_DIAG_QUERY_WIDTH") ? size_t(std::atoi(std::getenv("LLAMA_DIAG_QUERY_WIDTH"))) : 2;
-            if (!t.assert_true(width >= 1 && width <= 4)) return;
+            if (!t.assert_true(width >= 1 && width <= GGML_KV_STREAM_SPAN_QUERY_WIDTH)) return;
             for (size_t first = 0; first < continuation.size(); first += width) {
                 const size_t count = std::min(width, continuation.size()-first);
                 const auto save = [&](llama_context * ctx) {

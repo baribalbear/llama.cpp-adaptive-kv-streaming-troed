@@ -5,6 +5,7 @@
 #include "fattn.cuh"
 #include "../ggml-backend-impl.h"
 #include "../ggml-kv-stream.h"
+#include "../ggml-kv-stream-partial.h"
 
 #include <cmath>
 #include <climits>
@@ -433,7 +434,7 @@ static bool spans_workspace(
                 uint32_t(view.query_tokens),view.active_tokens,plan)) return false;
         if (!vector_spans_workspace(view,plan,bytes)) return false;
     } else {
-        if ((view.query_tokens != 3 && view.query_tokens != 4) ||
+        if (view.query_tokens > GGML_KV_STREAM_SPAN_QUERY_WIDTH ||
                 !((view.shape.type_k == GGML_TYPE_F16 && view.shape.type_v == GGML_TYPE_F16) ||
                   (view.shape.type_k == GGML_TYPE_Q8_0 && view.shape.type_v == GGML_TYPE_Q4_0))) return false;
         auto & ctx = *static_cast<ggml_backend_cuda_context *>(backend->context);
@@ -576,14 +577,14 @@ static bool mma_workspace(ggml_backend_t backend, int32_t key, int32_t value,
             !spans || spans > 3) return false;
     ggml_tensor q={},k={},v={},mask={},op={};
     q.type=GGML_TYPE_F32;
-    q.ne[0]=256; q.ne[1]=4; q.ne[2]=heads; q.ne[3]=1;
+    q.ne[0]=256; q.ne[1]=GGML_KV_STREAM_SPAN_QUERY_WIDTH; q.ne[2]=heads; q.ne[3]=1;
     k.type=ggml_type(key); v.type=ggml_type(value);
     for (auto * tensor : {&k,&v}) {
         tensor->ne[0]=256; tensor->ne[1]=int64_t(tokens);
         tensor->ne[2]=kv_heads; tensor->ne[3]=1;
     }
     mask.type=GGML_TYPE_F16;
-    mask.ne[0]=int64_t(tokens); mask.ne[1]=4;
+    mask.ne[0]=int64_t(tokens); mask.ne[1]=GGML_KV_STREAM_SPAN_QUERY_WIDTH;
     mask.ne[2]=mask.ne[3]=1;
     op.op=GGML_OP_FLASH_ATTN_EXT; op.type=GGML_TYPE_F32;
     op.src[0]=&q; op.src[1]=&k; op.src[2]=&v; op.src[3]=&mask;
@@ -615,7 +616,7 @@ static bool spans(
             mask->ne[0] < int64_t(view.active_tokens)) return false;
 
     if (view.query_tokens >= 3) {
-        if ((view.query_tokens != 3 && view.query_tokens != 4) ||
+        if (view.query_tokens > GGML_KV_STREAM_SPAN_QUERY_WIDTH ||
                 !((view.shape.type_k == GGML_TYPE_F16 && view.shape.type_v == GGML_TYPE_F16) ||
                   (view.shape.type_k == GGML_TYPE_Q8_0 && view.shape.type_v == GGML_TYPE_Q4_0))) return false;
         size_t required = 0;

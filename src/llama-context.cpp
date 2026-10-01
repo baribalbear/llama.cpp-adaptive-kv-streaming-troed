@@ -267,9 +267,9 @@ llama_context::llama_context(
     cparams.shared_device_memory_bytes = params.shared_device_memory_bytes;
     cparams.kv_stream_auxiliary_layers = params.kv_stream_auxiliary_layers;
     const bool streamed_rs_rollback = cparams.kv_stream_auxiliary_layers == 1 &&
-        cparams.n_rs_seq > 0 && cparams.n_rs_seq <= 3;
-    if (cparams.kv_stream_auxiliary_layers && cparams.n_rs_seq > 3) {
-        throw std::runtime_error("KV-stream recurrent rollback supports depth 1-3");
+        cparams.n_rs_seq > 0 && cparams.n_rs_seq <= LLAMA_KV_STREAM_MTP_DRAFT_MAX;
+    if (cparams.kv_stream_auxiliary_layers && cparams.n_rs_seq > LLAMA_KV_STREAM_MTP_DRAFT_MAX) {
+        throw std::runtime_error("KV-stream recurrent rollback supports depth 1-5");
     }
     if (cparams.kv_stream_auxiliary_layers > 1 ||
             (cparams.kv_stream_auxiliary_layers && !cparams.kv_streaming())) {
@@ -857,10 +857,13 @@ void llama_context::sched_reserve() {
                 }
             }
         }
-        // A verify batch runs a wider decode graph than the single-token TG path;
-        // include it in the decode-phase grant at the admitted width.
-        const uint32_t verify_width = cparams.kv_streaming() ?
-            cparams.kv_stream_verify_width : 4u;
+        // A verify batch runs a wider decode graph than the single-token TG path. The streamed
+        // target and the attached draft grant at their own admitted widths; a context without
+        // one covers the widest chain the lease admits. A width the span kernels cover runs from
+        // the stream model's own tile workspace, so reserving a graph for it would charge the
+        // scheduler's f16 estimate of one whole layer for a batch that never gathers.
+        const uint32_t verify_width = cparams.kv_streaming() || cparams.mtp_publish_host ?
+            cparams.kv_stream_verify_width : LLAMA_KV_STREAM_MTP_DRAFT_MAX + 1;
         if ((cparams.kv_streaming() || cparams.mtp_publish_host) && n_seqs == 1 && verify_width > 1) {
             const uint32_t width = std::min(n_tokens, verify_width);
             std::vector<size_t> verify_one(backend_ptrs.size());
@@ -2144,7 +2147,7 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
     const auto text_phase = cparams.kv_streaming() ?
         (cparams.kv_stream_decode ? llama_memory_text_phase::decode : llama_memory_text_phase::prefill) :
         (cparams.mtp_publish_host ?
-            (n_tokens_all <= 4 ? llama_memory_text_phase::decode : llama_memory_text_phase::prefill) :
+            (n_tokens_all <= LLAMA_KV_STREAM_MTP_DRAFT_MAX + 1 ? llama_memory_text_phase::decode : llama_memory_text_phase::prefill) :
             llama_memory_text_phase::unspecified);
 
     if (output_all) {
@@ -2202,9 +2205,10 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
     }
     if (draft_graph_rebuild) {
         auto reserve_context = memory->init_full();
+        const uint32_t decode_width = std::max(cparams.n_seq_max,
+            std::min(cparams.kv_stream_verify_width, std::min(cparams.n_ctx, cparams.n_ubatch)));
         const uint32_t reserve_tokens = text_phase == llama_memory_text_phase::decode ?
-            std::min(4u, std::min(cparams.n_ctx, cparams.n_ubatch)) :
-            std::min(cparams.n_ctx, cparams.n_ubatch);
+            decode_width : std::min(cparams.n_ctx, cparams.n_ubatch);
         const uint32_t reserve_outputs = std::min(reserve_tokens, cparams.n_outputs_max);
         if (!reserve_context || !graph_reserve(reserve_tokens, 1, reserve_outputs,
                 reserve_context.get())) {
@@ -4438,7 +4442,7 @@ static llama_kv_stream_model * llama_mtp_target_stream(llama_context * ctx) {
 }
 
 bool llama_kv_stream_mtp_prepare(llama_context * ctx, uint32_t future_tokens) {
-    if (!ctx || future_tokens > 4) return false;
+    if (!ctx || future_tokens > KV_STREAM_SPAN_QUERY_WIDTH) return false;
     if (!ctx->get_cparams().kv_stream_auxiliary_layers) return true;
     auto * stream = llama_mtp_target_stream(ctx);
     const auto cache = stream ? stream->auxiliary_cache() : nullptr;
@@ -4465,6 +4469,23 @@ bool llama_kv_stream_mtp_release(llama_context * ctx) {
     if (!ctx->get_cparams().kv_stream_auxiliary_layers) return true;
     auto * stream = llama_mtp_target_stream(ctx);
     return stream && stream->release_mtp_layer();
+}
+
+bool llama_kv_stream_residency(llama_context * ctx,
+        bool * fully_resident, uint32_t * narrow_draft_max) {
+    if (!ctx || !fully_resident || !narrow_draft_max) return false;
+    auto * stream = llama_mtp_target_stream(ctx);
+    if (!stream) return false;
+    llama_kv_stream_runtime_diagnostics diagnostics;
+    if (!stream->runtime_diagnostics(diagnostics)) return false;
+    const size_t page = stream->host()->config().shape.page_tokens;
+    if (!page) return false;
+    // The policy counts pages per layer; the active range is resident when its page
+    // count fits the per-layer resident capacity.
+    const size_t active_pages = (stream->tokens() + page - 1)/page;
+    *fully_resident = active_pages <= diagnostics.resident_pages_per_layer;
+    *narrow_draft_max = KV_STREAM_SPAN_QUERY_WIDTH - 1;
+    return true;
 }
 
 bool llama_get_causal_attn(const llama_context * ctx) {
