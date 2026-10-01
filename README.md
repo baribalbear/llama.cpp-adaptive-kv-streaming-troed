@@ -29,50 +29,67 @@ refused otherwise). A verify batch a span kernel covers runs from the stream
 model's own tile workspace, so on the shared-arena path the decode phase keeps
 its KV pool.
 
-## Attached MTP depth: MTP3 against MTP5
+## Attached MTP depth: MTP3, MTP5, and MTP5 with ngram
 
-Both columns are the same fork, the same build, the same single GPU arena, and
-the same model, measured at temperature 0. MTP5 means `--spec-draft-n-max 5`; MTP3
-is the depth Raymond's branch supports. Both use `--spec-draft-p-min 0.7` [^2].
+All columns are the same fork, the same build, the same single GPU arena, and the
+same model, measured at temperature 0. MTP5 means `--spec-draft-n-max 5`; MTP3 is
+the depth Raymond's branch supports. The third column adds an ngram drafter
+alongside MTP5 (`--spec-type ngram-simple,draft-mtp`), which is currently slower
+at depth for memory reasons rather than drafting [^3]. All use
+`--spec-draft-p-min 0.7` [^2].
 
 Decode, tokens per second:
 
-| Context | MTP3 | MTP5 |
-| --- | --- | --- |
-| 40k | 62.74 | 59.75 |
-| 80k | 41.83 | 44.93 |
-| 120k | 36.43 | 37.24 |
-| 160k | 40.50 | 48.56 |
+| Context | MTP3 | MTP5 | MTP5 + ngram |
+| --- | --- | --- | --- |
+| 40k | 62.74 | 59.75 | 74.01 |
+| 80k | 41.83 | 44.93 | 38.30 |
+| 120k | 36.43 | 37.24 | 28.48 |
+| 160k | 40.50 | 48.56 | 33.99 |
 
 Prefill, tokens per second - the depth does not reach this path:
 
-| Context | MTP3 | MTP5 |
-| --- | --- | --- |
-| 40k | 761.6 | 759.2 |
-| 80k | 657.0 | 653.4 |
-| 120k | 558.6 | 558.0 |
-| 160k | 481.7 | 480.8 |
+| Context | MTP3 | MTP5 | MTP5 + ngram |
+| --- | --- | --- | --- |
+| 40k | 761.6 | 759.2 | 762.6 |
+| 80k | 657.0 | 653.4 | 653.0 |
+| 120k | 558.6 | 558.0 | 558.6 |
+| 160k | 481.7 | 480.8 | 481.8 |
 
 Decode memory and draft quality at 160k:
 
-| | MTP3 | MTP5 |
-| --- | --- | --- |
-| Decode compute lease | 17.6 MiB | 24.6 MiB |
-| Resident KV pages | 575 | 574 |
-| Decode KV pool | 3978 MiB | 3971 MiB |
-| Draft acceptance | 0.981 | 1.000 |
-| Realized verify width | 3.85 | 5.95 |
-| Cost per forward | 93.72 ms | 122.40 ms |
+| | MTP3 | MTP5 | MTP5 + ngram |
+| --- | --- | --- | --- |
+| Decode compute lease | 17.6 MiB | 24.6 MiB | 808.6 MiB |
+| Resident KV pages | 575 | 574 | 402 |
+| Decode KV pool | 3978 MiB | 3971 MiB | 2874 MiB |
+| Draft acceptance | 0.981 | 1.000 | 1.000 |
+| Realized verify width | 3.85 | 5.95 | 5.95 |
+| Cost per forward | 93.72 ms | 122.40 ms | 174.84 ms |
 
-Two extra draft levels cost 7 MiB. Accepted tokens decide the rate, not width:
-MTP5 spends more per forward and only wins where the extra rows are accepted, so
-at 40k it accepts less and trails MTP3, while at 160k it accepts every drafted
-row and leads by 20 percent.
+Two extra MTP draft levels cost 7 MiB. Accepted tokens decide the rate, not
+width: MTP5 spends more per forward and only wins where the extra rows are
+accepted, so at 40k it accepts less and trails MTP3, while at 160k it accepts
+every drafted row and leads by 20 percent.
 
 [^2]: `--spec-draft-p-min` is the draft's minimum sampling probability. The
 measured rows above use the preset's 0.7. A different value changes how often the
 draft continues, so it moves acceptance and realized width, and the tables are
 not comparable across values.
+
+[^3]: The ngram column is slower at depth on memory, not on drafting: the wide
+verify reserves VRAM the decode phase would otherwise use to stream the KV cache
+from host memory. ngram-simple's default `--spec-ngram-simple-size-m 48` makes
+the streamed verify width 49 (one plus the widest draft any configured speculator
+can produce), which is wider than the span kernels cover. The decode phase
+therefore reserves the whole-layer gather shape out of the fixed GPU arena: the
+attention grant grows to the full layer K/V layout (about 318 MiB) and the verify
+graph to about 809 MiB. That is roughly 1.1 GiB less VRAM for the decode-phase KV
+pool (about 3971 to about 2874 MiB), so about 172 fewer pages stay resident and
+every forward streams more. Only forwards wider than the span width actually
+gather; a batch at or below it still runs from the stream model's own tile
+workspace. The mix wins where the drafter finds long matches (40k above) but
+trails MTP5 alone at depth.
 
 ---
 
