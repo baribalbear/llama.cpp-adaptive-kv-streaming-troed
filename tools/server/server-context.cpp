@@ -1050,10 +1050,14 @@ private:
                                         COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
         const bool has_spec = has_draft || spec_mtp;
         const bool streaming = params.kv_stream_pool_bytes || params.shared_device_memory_bytes;
-        const bool streamed_mtp = params.kv_stream_auxiliary_layers == 1;
+        const bool streamed_mtp = common_params_uses_streamed_mtp(params);
+        if (params.kv_stream_auxiliary_layers && !streamed_mtp) {
+            SRV_ERR("%s", "auxiliary KV layers require embedded draft-mtp and a KV stream pool or arena\n");
+            return false;
+        }
         if (streaming && (has_mmproj || params.fit_params ||
                 (has_spec && !streamed_mtp))) {
-            SRV_ERR("%s", "KV streaming shared memory requires text-only execution, --fit off, and explicit MTP opt-in for speculation\n");
+            SRV_ERR("%s", "KV streaming shared memory requires text-only execution, --fit off, and embedded draft-mtp for speculation\n");
             return false;
         }
         const auto unsupported_type = [](auto type) {
