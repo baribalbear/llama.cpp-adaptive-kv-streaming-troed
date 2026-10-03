@@ -9,8 +9,8 @@ Additions in this fork:
 
 - Synced to upstream llama.cpp: merged
   [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp)
-  [`6c7a87f7e`](https://github.com/ggml-org/llama.cpp/commit/6c7a87f7e5e5cd75b8a641c3471f2dee84a6ed17)
-  (2026-09-28) on 2026-09-29.
+  [`436f6f89e`](https://github.com/ggml-org/llama.cpp/commit/436f6f89e1e581249900b37a5b8a12a36a6d0912)
+  (2026-10-03) on 2026-10-03.
 - ngram speculators can run alongside attached MTP on a streamed context:
   `--spec-type ngram-simple,draft-mtp` (any `ngram-*` type works) lets the ngram
   drafter propose the wide round and the MTP head the narrow one, sharing one
