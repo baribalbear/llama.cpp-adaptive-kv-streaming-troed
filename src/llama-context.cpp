@@ -4042,7 +4042,7 @@ void llama_context::opt_init(struct llama_model * model, struct llama_opt_params
     }
 
     // the training graph is different, need to reserve again
-    sched_need_reserve = true;
+    sched_reserve_state.invalidate();
     sched_reserve();
 
     ggml_opt_params opt_params = ggml_opt_default_params(sched.get(), GGML_OPT_LOSS_TYPE_CROSS_ENTROPY);

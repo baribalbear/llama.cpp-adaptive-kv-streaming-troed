@@ -1472,8 +1472,8 @@ static ggml_backend_buffer_type_t ggml_backend_cuda_kv_host_buffer_type(int devi
     auto & type = types[device];
     if (!type.context) {
         type = {
-            {ggml_backend_cuda_kv_host_name, ggml_backend_cuda_kv_host_alloc,
-             ggml_backend_cuda_buffer_type_get_alignment, nullptr, nullptr, ggml_backend_cuda_kv_host_is_host},
+            {ggml_backend_cuda_kv_host_name, ggml_backend_cuda_kv_host_alloc, nullptr,
+             ggml_backend_cuda_buffer_type_get_alignment, nullptr, nullptr, nullptr, ggml_backend_cuda_kv_host_is_host},
             ggml_backend_reg_dev_get(ggml_backend_cuda_reg(), device),
             new ggml_backend_cuda_buffer_type_context{device, "CUDA" + std::to_string(device) + "_KV_Host", false},
         };
