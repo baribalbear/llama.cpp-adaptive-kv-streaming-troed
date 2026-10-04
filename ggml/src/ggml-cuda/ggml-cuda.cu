@@ -937,7 +937,10 @@ static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_t
         // A streamed batch runs from the stream model's own tile workspace, so it needs no K/V
         // extras; that covers the vector path (1-2 rows) and the span path (up to the span
         // width). Wider batches and plain prefill enter stock attention and need its extras.
+        // Query width alone cannot distinguish short prefill from bounded decode, so also
+        // require that the graph marked this op's workspace external.
         if (!tensor->src[0] || tensor->src[0]->ne[1] > GGML_KV_STREAM_SPAN_QUERY_WIDTH ||
+                !ggml_backend_execution_has_external_workspace(tensor) ||
                 !ggml_backend_execution_owner(tensor, owner) || !owner ||
                 !ggml_backend_execution_supports(owner, ggml_backend_buft_get_device(buft), tensor)) {
             size = ggml_cuda_flash_attn_ext_get_alloc_size(buft_ctx->device, tensor);

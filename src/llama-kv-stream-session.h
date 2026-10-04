@@ -21,6 +21,7 @@ struct llama_kv_stream_session_config {
     size_t mma_workspace_bytes = 0;
     // Widest admitted decode batch; the session rejects anything wider.
     uint32_t verify_width = 1;
+    llama_memory_stage_id suspend_stage = 0;
 };
 
 // Serial append-only device consumer. The backend outlives the session; recurrent state belongs to the text model.
@@ -42,6 +43,7 @@ public:
     void abort();
     bool active() const noexcept;
     bool failed() const noexcept;
+    bool device_suspended() const noexcept;
     size_t tokens() const noexcept;
     size_t granted_bytes() const noexcept;
     uint64_t layout_revision() const noexcept;

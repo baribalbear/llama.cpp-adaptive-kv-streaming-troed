@@ -1084,6 +1084,8 @@ struct common_batch {
     common_batch(struct llama_context * ctx);
 
     llama_batch_ext * get() { return get_sub_batch(0, size()); }
+    // const view for read-only callers; rendering is pure with respect to tokens
+    llama_batch_ext * get() const { return const_cast<common_batch *>(this)->get_sub_batch(0, size()); }
 
     // render entries [off, off + n) into batch, the result is overwritten by the next call
     llama_batch_ext * get_sub_batch(int32_t off, int32_t n);
