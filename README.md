@@ -11,6 +11,10 @@ Additions in this fork:
   [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp)
   [`436f6f89e`](https://github.com/ggml-org/llama.cpp/commit/436f6f89e1e581249900b37a5b8a12a36a6d0912)
   (2026-10-03) on 2026-10-03.
+- Synced to Raymond's adaptive-KV fork: merged
+  [RaymondHuang210129/llama.cpp-adaptive-kv-streaming](https://github.com/RaymondHuang210129/llama.cpp-adaptive-kv-streaming)
+  [`a0ddf8719`](https://github.com/RaymondHuang210129/llama.cpp-adaptive-kv-streaming/commit/a0ddf8719e0ef71d55e1f462156207aa91063df9)
+  (2026-10-04) on 2026-10-04.
 - ngram speculators can run alongside attached MTP on a streamed context:
   `--spec-type ngram-simple,draft-mtp` (any `ngram-*` type works) lets the ngram
   drafter propose the wide round and the MTP head the narrow one, sharing one
