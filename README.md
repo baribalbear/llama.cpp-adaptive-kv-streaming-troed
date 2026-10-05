@@ -1,41 +1,73 @@
 # troed's fork of Raymond's adaptive KV streaming
 
 This is a fork of
-[RaymondHuang210129/llama.cpp-adaptive-kv-streaming](https://github.com/RaymondHuang210129/llama.cpp-adaptive-kv-streaming).
-Everything below is Raymond's documentation for the adaptive KV streaming design
-this fork builds on.
+[RaymondHuang210129/llama.cpp-adaptive-kv-streaming](https://github.com/RaymondHuang210129/llama.cpp-adaptive-kv-streaming). Their README follows. Note that for good performance when streaming KV cache your GPU needs to be on PCIe 5.0.
 
-Additions in this fork:
+## Installation TL;DR if you have a 16GB CUDA card:
+
+Download this [ASCII condensed version of ByteShape Qwen3.8-27B-IQ4_XS](https://huggingface.co/troed/Qwen3.8-27B-ASCII-Condensed).
+Clone and compile this repo:
+
+```
+cmake -B build -DGGML_NATIVE=ON -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DGGML_CUDA_FA_QUANTS=q8_0-q4_0 -DGGML_CUDA=ON
+cmake --build build --config Release -j
+```
+
+Put this in your models-preset.ini:
+
+```
+[Qwen3.8-27B]
+spec-type = draft-mtp
+spec-draft-n-max = 5
+spec-draft-p-min = 0.8
+device-draft = CUDA0
+n-gpu-layers-draft = all
+# If all 16GB are available to the model, else lower this value
+shared-device-memory-mib = 3904
+# Any suitable template
+chat-template-file = chat_template_qwen3.8.jinja
+m = Qwen3.8-27B-ASCII-Condensed-IQ4_XS-3.84bpw.gguf
+ctx-size = 200192
+n-gpu-layers = 99
+batch-size = 256
+ubatch-size = 256
+cache-type-k = q8_0
+cache-type-v = q4_0
+fit = off
+parallel = 1
+temp = 1.0
+top-p = 0.95
+top-k = 20
+min-p = 0.0
+presence-penalty = 0.0
+repeat-penalty = 1.0
+reasoning = on
+reasoning-preserve = on
+# Original GGUF-converted mmproj
+mmproj = Qwen3.8-mmproj-BF16.gguf
+load-mode = none
+flash-attn = on
+```
+
+## What's different compared to Raymond's own repo
 
 - Synced to upstream llama.cpp: merged
   [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp)
-  [`436f6f89e`](https://github.com/ggml-org/llama.cpp/commit/436f6f89e1e581249900b37a5b8a12a36a6d0912)
-  (2026-10-03) on 2026-10-03.
+  [`436f6f89e`](https://github.com/ggml-org/llama.cpp/commit/436f6f89e1e581249900b37a5b8a12a36a6d0912) (2026-10-03).
 - Synced to Raymond's adaptive-KV fork: merged
   [RaymondHuang210129/llama.cpp-adaptive-kv-streaming](https://github.com/RaymondHuang210129/llama.cpp-adaptive-kv-streaming)
-  [`a0ddf8719`](https://github.com/RaymondHuang210129/llama.cpp-adaptive-kv-streaming/commit/a0ddf8719e0ef71d55e1f462156207aa91063df9)
-  (2026-10-04) on 2026-10-04.
+  [`a0ddf8719`](https://github.com/RaymondHuang210129/llama.cpp-adaptive-kv-streaming/commit/a0ddf8719e0ef71d55e1f462156207aa91063df9) (2026-10-04)
 - ngram speculators can run alongside attached MTP on a streamed context:
   `--spec-type ngram-simple,draft-mtp` (any `ngram-*` type works) lets the ngram
   drafter propose the wide round and the MTP head the narrow one, sharing one
-  target pool [^1].
+  target pool [^1]. This is not yet speed optimized, see table further down.
 - Attached MTP accepts more than three draft tokens: `--spec-draft-n-max` may be
-  raised to 5, and the streams a span-covered verify needs come from the stream
-  model's own tile workspace, so depth costs a few MiB rather than a whole layer
-  of f16 attention scratch [^2].
+  raised to 5, which together with a 0.7-0.8 cutoff raises TG tps [^2].
 
 Previous fork of Raymond's v1 + ejectable MTP/DFlash2 and ngram-* is on [this branch](https://github.com/troed/llama.cpp-adaptive-kv-streaming/tree/feature/kv-stream-phase-arena-spec)
-
-[^1]: The streamed verify width is derived from the configured speculators, one
-plus the widest draft any of them can produce, and clamped to the context and
-ubatch, so a wide ngram draft needs an ubatch at least that large (the load is
-refused otherwise). A verify batch a span kernel covers runs from the stream
-model's own tile workspace, so on the shared-arena path the decode phase keeps
-its KV pool.
-
 ## Attached MTP depth: MTP3, MTP5, and MTP5 with ngram
 
-All columns are the same fork, the same build, the same single GPU arena, and the
+All columns from the same build, the same single GPU arena, and the
 same model, measured at temperature 0. MTP5 means `--spec-draft-n-max 5`; MTP3 is
 the depth Raymond's branch supports. The third column adds an ngram drafter
 alongside MTP5 (`--spec-type ngram-simple,draft-mtp`), which is currently slower
@@ -75,6 +107,13 @@ Two extra MTP draft levels cost 7 MiB. Accepted tokens decide the rate, not
 width: MTP5 spends more per forward and only wins where the extra rows are
 accepted, so at 40k it accepts less and trails MTP3, while at 160k it accepts
 every drafted row and leads by 20 percent.
+
+[^1]: The streamed verify width is derived from the configured speculators, one
+plus the widest draft any of them can produce, and clamped to the context and
+ubatch, so a wide ngram draft needs an ubatch at least that large (the load is
+refused otherwise). A verify batch a span kernel covers runs from the stream
+model's own tile workspace, so on the shared-arena path the decode phase keeps
+its KV pool.
 
 [^2]: `--spec-draft-p-min` is the draft's minimum sampling probability. The
 measured rows above use the preset's 0.7. A different value changes how often the
