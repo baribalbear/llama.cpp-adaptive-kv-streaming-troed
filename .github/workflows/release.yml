@@ -1235,7 +1235,7 @@ jobs:
   windows-cuda:
     name: windows-cuda (${{ matrix.cuda }}, ${{ matrix.arch }})
     needs: [check-release]
-    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    if: ${{ needs.check-release.outputs.should_release == 'false' }}
 
     runs-on: windows-2022
 
@@ -1845,7 +1845,7 @@ jobs:
       #- macos-cpu
       #- ios-xcode
       #- openEuler-cann
-      - ui-build
+      #- ui-build
 
     outputs:
       tag_name: ${{ steps.tag.outputs.name }}
