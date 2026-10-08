@@ -908,7 +908,7 @@ jobs:
   windows-cpu:
     name: windows-cpu / ${{ matrix.arch }}
     needs: [check-release, ui-build]
-    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    if: ${{ needs.check-release.outputs.should_release == 'false' }}
 
     runs-on: windows-2025-vs2026
 
@@ -919,7 +919,7 @@ jobs:
       matrix:
         include:
           - arch: 'x64'
-          - arch: 'arm64'
+          #- arch: 'arm64'
 
     steps:
       - name: Clone
@@ -1811,7 +1811,7 @@ jobs:
 
   ui-build:
     needs: [check-release]
-    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    if: ${{ needs.check-release.outputs.should_release == 'false' }}
     uses: ./.github/workflows/ui-build.yml
 
   release:
@@ -1845,7 +1845,7 @@ jobs:
       #- macos-cpu
       #- ios-xcode
       #- openEuler-cann
-      #- ui-build
+      - ui-build
 
     outputs:
       tag_name: ${{ steps.tag.outputs.name }}
