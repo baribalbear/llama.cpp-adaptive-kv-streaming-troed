@@ -1828,7 +1828,7 @@ jobs:
 
     needs:
       #- windows
-      #- windows-cpu
+      - windows-cpu
       - windows-cuda
       #- windows-sycl
       #- windows-rocm
