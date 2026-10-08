@@ -1827,23 +1827,23 @@ jobs:
     runs-on: ubuntu-slim
 
     needs:
-      - windows
-      - windows-cpu
+      #- windows
+      #- windows-cpu
       - windows-cuda
-      - windows-sycl
-      - windows-rocm
-      - windows-openvino
-      - ubuntu-24-rocm
-      - ubuntu-cpu
-      - ubuntu-vulkan
-      - ubuntu-cuda
-      - ubuntu-24-openvino
-      - ubuntu-24-sycl
-      - android-arm64
-      - android-arm64-snapdragon
-      - linux-arm64-snapdragon
-      - macos-cpu
-      - ios-xcode
+      #- windows-sycl
+      #- windows-rocm
+      #- windows-openvino
+      #- ubuntu-24-rocm
+      #- ubuntu-cpu
+      #- ubuntu-vulkan
+      #- ubuntu-cuda
+      #- ubuntu-24-openvino
+      #- ubuntu-24-sycl
+      #- android-arm64
+      #- android-arm64-snapdragon
+      #- linux-arm64-snapdragon
+      #- macos-cpu
+      #- ios-xcode
       #- openEuler-cann
       - ui-build
 
