@@ -937,11 +937,11 @@ jobs:
         run: |
           choco install ninja
 
-      - name: ccache
-        uses: ggml-org/ccache-action@v1.2.24
-        with:
-          key: release-windows-2025-vs2026-${{ matrix.arch }}-cpu
-          evict-old-files: 1d
+      #- name: ccache
+        #uses: ggml-org/ccache-action@v1.2.24
+        #with:
+          #key: release-windows-2025-vs2026-${{ matrix.arch }}-cpu
+          #evict-old-files: 1d
 
       - name: Build
         shell: cmd
